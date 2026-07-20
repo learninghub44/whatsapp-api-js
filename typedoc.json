@@ -1,0 +1,18 @@
+{
+    // Comments are supported, like tsconfig.json
+    "entryPoints": [
+        "src/index.ts",
+        "src/types.ts",
+        "src/utils.ts",
+        "src/errors.ts",
+        "src/emitters.ts",
+        "src/apis/index.ts",
+        "src/messages/index.ts",
+        "src/setup/index.ts",
+        "src/middleware/index.ts"
+    ],
+    "exclude": ["**/node_modules/**"],
+    "out": "docs",
+    "includeVersion": true,
+    "excludeInternal": true
+}

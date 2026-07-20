@@ -1,0 +1,137 @@
+import { WhatsAppAPIMiddleware } from "./globals.js";
+import {
+    WhatsAppAPIError,
+    WhatsAppAPIMissingRawBodyError,
+    WhatsAppAPIPayloadTooLargeError
+} from "../errors.js";
+
+import type { IncomingMessage } from "node:http";
+import type { Readable } from "node:stream";
+
+import type { GetParams } from "../types.d.ts";
+
+/**
+ * node:http server middleware for WhatsAppAPI
+ */
+export class WhatsAppAPI extends WhatsAppAPIMiddleware {
+    /**
+     * POST request handler for node:http server
+     *
+     * @example
+     * ```ts
+     * import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+     * import { WhatsAppAPI } from "whatsapp-api-js/middleware/node-http";
+     *
+     * const Whatsapp = new WhatsAppAPI({
+     *     token: "YOUR_TOKEN",
+     *     appSecret: "YOUR_APP_SECRET",
+     *     webhookVerifyToken: "YOUR_WEBHOOK_VERIFY_TOKEN"
+     * });
+     *
+     * const server = createServer(async (request: IncomingMessage, response: ServerResponse) => {
+     *     if (request.url === "/message" && request.method === "POST") {
+     *         response.statusCode = await Whatsapp.handle_post(request);
+     *         response.end();
+     *     }
+     * });
+     *
+     * server.listen(5000);
+     * ```
+     *
+     * @override
+     * @param req - The request object
+     * @returns The status code to be sent to the client
+     */
+    async handle_post(req: IncomingMessage): Promise<number> {
+        /**
+         * Copy pasted from an issue on Deno's repository :)
+         *
+         * @internal
+         * @param readable - The readable stream
+         * @returns The parsed body
+         */
+        async function parseBody(readable: Readable) {
+            const chunks: Buffer[] = [];
+
+            let received = 0;
+            for await (const c of readable) {
+                const buf = typeof c === "string" ? Buffer.from(c) : c;
+
+                received += buf.length;
+                if (received > WhatsAppAPI._MAX_PAYLOAD_SIZE) {
+                    readable.destroy();
+                    throw new WhatsAppAPIPayloadTooLargeError();
+                }
+
+                chunks.push(c);
+            }
+
+            return Buffer.concat(chunks).toString("utf-8");
+        }
+
+        try {
+            const signature = req.headers["x-hub-signature-256"];
+            if (typeof signature !== "string") throw 400;
+
+            const length = req.headers["content-length"];
+
+            if (!length || Number.isNaN(+length)) {
+                throw new WhatsAppAPIMissingRawBodyError();
+            }
+
+            if (+length > WhatsAppAPI._MAX_PAYLOAD_SIZE) {
+                throw new WhatsAppAPIPayloadTooLargeError();
+            }
+
+            const body = await parseBody(req);
+
+            await this.post(JSON.parse(body || "{}"), body, signature);
+
+            return 200;
+        } catch (e) {
+            // In case the JSON.parse fails ¯\_(ツ)_/¯
+            return e instanceof WhatsAppAPIError ? e.httpStatus : 500;
+        }
+    }
+
+    /**
+     * GET request handler for node:http server
+     *
+     * @example
+     * ```ts
+     * import { createServer, IncomingMessage, ServerResponse } from 'node:http';
+     * import { WhatsAppAPI } from "whatsapp-api-js/middleware/node-http";
+     *
+     * const server = createServer((request: IncomingMessage, response: ServerResponse) => {
+     *     if (request.url === "/message" && request.method === "GET") {
+     *         try {
+     *             response.statusCode = 200;
+     *             response.end(Whatsapp.handle_get(request));
+     *         } catch (e) {
+     *             response.statusCode = e as number;
+     *             response.end();
+     *         }
+     *     }
+     * });
+     *
+     * server.listen(5000);
+     * ```
+     *
+     * @override
+     * @param req - The request object
+     * @returns The challenge string to be sent to the client
+     * @throws The error code
+     */
+    handle_get(req: IncomingMessage): string {
+        try {
+            return this.get(
+                Object.fromEntries(
+                    new URL(req.url!, `http://${req.headers.host}`).searchParams
+                ) as GetParams
+            );
+        } catch (e) {
+            // In case who knows what fails ¯\_(ツ)_/¯
+            throw e instanceof WhatsAppAPIError ? e.httpStatus : 500;
+        }
+    }
+}
