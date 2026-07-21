@@ -1,0 +1,21 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+    background-color: #f7f6f2;
+    color: #171a1f;
+}
+
+.label {
+    font-size: 0.6875rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #6b6f76;
+}
+
+.card {
+    background-color: #ffffff;
+    border: 1px solid #e3e0d6;
+    border-radius: 0.5rem;
+}
