@@ -124,6 +124,11 @@ docs/
 
 # Builds
 lib/
+# ...except dashboard/src/lib, which is source (API client, auth hook,
+# Supabase client), not build output — the bare `lib/` rule above was
+# silently excluding it from every commit.
+!dashboard/src/lib/
+!dashboard/src/lib/**
 
 # JetBrains IDEs
 .idea

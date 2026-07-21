@@ -93,6 +93,14 @@ Point the tenant's Meta app webhook at `https://<your-host>/webhook`.
 
 ### Known Phase 3 gaps
 - Intent routing is keyword substring matching, not NLU/AI classification.
-- No dashboard screens yet for building flows/templates or viewing the
-  escalated-conversations inbox — only the `/api/tenants/:id/flows`,
-  `/templates`, and `/conversations/escalated` endpoints exist so far.
+- The dashboard's flow builder is a flat step list (add/remove, no
+  reordering/drag-and-drop yet) and `send_template` steps require typing
+  the template name rather than picking from a list.
+
+### Fixed along the way
+- `dashboard/src/lib/{supabase,useAuth,api}.ts` were missing from every
+  Phase 2 commit — the repo's root `.gitignore` had a bare `lib/` rule
+  (meant for this SDK's build output) that was silently matching
+  `dashboard/src/lib/` too, so those files were never tracked even though
+  `dashboard/src/app/**` imported them. Re-added the files and scoped the
+  `.gitignore` rule so this can't happen again.

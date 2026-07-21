@@ -88,7 +88,7 @@ provider chains. No dashboard/UI yet.
 - [x] Intent routing (keyword-based) + simple flow/rules builder.
 - [x] Human handoff / escalation.
 - [x] Templates and quick replies per tenant.
-- [ ] Dashboard UI for building/editing flows (API exists; no screens yet).
+- [x] Dashboard screens for flows/templates/escalated conversations.
 
 ## Notes for agents picking this up
 - Keep the AI provider abstraction and the WhatsApp layer fully

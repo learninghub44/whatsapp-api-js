@@ -9,7 +9,12 @@ import {
     ApiError,
     type AIProviderName,
     type AIProviderRow,
-    type UsageSummaryRow
+    type UsageSummaryRow,
+    type FlowRow,
+    type FlowStep,
+    type TemplateRow,
+    type QuickReply,
+    type EscalatedConversationRow
 } from "@/lib/api";
 
 const PROVIDERS: AIProviderName[] = [
@@ -55,6 +60,9 @@ export default function TenantDetailPage({
                 <div className="space-y-10">
                     <WhatsAppSection tenantId={tenantId} />
                     <AIProvidersSection tenantId={tenantId} />
+                    <HandoffSection tenantId={tenantId} />
+                    <TemplatesSection tenantId={tenantId} />
+                    <FlowsSection tenantId={tenantId} />
                     <UsageSection tenantId={tenantId} />
                 </div>
             </main>
@@ -442,6 +450,560 @@ function UsageSection({ tenantId }: { tenantId: string }) {
                     )}
                 </>
             )}
+        </section>
+    );
+}
+
+// --- Human handoff / escalation ---------------------------------------------
+
+function HandoffSection({ tenantId }: { tenantId: string }) {
+    const [conversations, setConversations] = useState<
+        EscalatedConversationRow[] | null
+    >(null);
+    const [error, setError] = useState("");
+    const [resuming, setResuming] = useState<string | null>(null);
+
+    function refresh() {
+        api.listEscalatedConversations(tenantId)
+            .then(setConversations)
+            .catch((err: unknown) =>
+                setError(
+                    err instanceof ApiError
+                        ? err.message
+                        : "Failed to load escalated conversations"
+                )
+            );
+    }
+
+    useEffect(refresh, [tenantId]);
+
+    async function resume(waId: string) {
+        setResuming(waId);
+        try {
+            await api.resumeBot(tenantId, waId);
+            refresh();
+        } catch (err) {
+            setError(
+                err instanceof ApiError ? err.message : "Failed to resume bot"
+            );
+        } finally {
+            setResuming(null);
+        }
+    }
+
+    return (
+        <section>
+            <p className="label mb-1">human handoff</p>
+            <h2 className="mb-4 text-lg font-semibold text-ink">
+                Escalated conversations
+            </h2>
+
+            {error && <p className="mb-3 text-sm text-warn">{error}</p>}
+
+            {conversations !== null && conversations.length === 0 && (
+                <div className="card p-8 text-center">
+                    <p className="text-sm text-muted">
+                        No conversations are currently waiting on a human — the
+                        bot is handling everything.
+                    </p>
+                </div>
+            )}
+
+            {conversations !== null && conversations.length > 0 && (
+                <div className="card divide-y divide-line">
+                    {conversations.map((c) => (
+                        <div
+                            key={c.waId}
+                            className="flex items-center justify-between px-5 py-3"
+                        >
+                            <div>
+                                <p className="font-mono text-sm text-ink">
+                                    {c.waId}
+                                </p>
+                                {c.reason && (
+                                    <p className="mt-0.5 text-xs text-muted">
+                                        {c.reason}
+                                    </p>
+                                )}
+                            </div>
+                            <button
+                                onClick={() => resume(c.waId)}
+                                disabled={resuming === c.waId}
+                                className="rounded-md border border-line px-3 py-1.5 text-sm font-medium text-ink transition hover:bg-paper disabled:opacity-50"
+                            >
+                                {resuming === c.waId ? "Resuming…" : "Resume bot"}
+                            </button>
+                        </div>
+                    ))}
+                </div>
+            )}
+        </section>
+    );
+}
+
+// --- Templates / quick replies -----------------------------------------------
+
+function parseQuickReplies(input: string): QuickReply[] {
+    return input
+        .split(",")
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .slice(0, 3)
+        .map((part) => {
+            const [id = "", ...rest] = part.split(":");
+            const title = rest.join(":").trim();
+            return { id: id.trim(), title: title || id.trim() };
+        });
+}
+
+function TemplatesSection({ tenantId }: { tenantId: string }) {
+    const [templates, setTemplates] = useState<TemplateRow[] | null>(null);
+    const [error, setError] = useState("");
+
+    const [name, setName] = useState("");
+    const [body, setBody] = useState("");
+    const [quickRepliesInput, setQuickRepliesInput] = useState("");
+    const [saving, setSaving] = useState(false);
+
+    function refresh() {
+        api.listTemplates(tenantId)
+            .then(setTemplates)
+            .catch((err: unknown) =>
+                setError(
+                    err instanceof ApiError
+                        ? err.message
+                        : "Failed to load templates"
+                )
+            );
+    }
+
+    useEffect(refresh, [tenantId]);
+
+    async function save(e: React.FormEvent) {
+        e.preventDefault();
+        if (!name.trim() || !body.trim()) return;
+        setSaving(true);
+        setError("");
+        try {
+            await api.upsertTemplate(tenantId, {
+                name: name.trim(),
+                body: body.trim(),
+                quickReplies: parseQuickReplies(quickRepliesInput)
+            });
+            setName("");
+            setBody("");
+            setQuickRepliesInput("");
+            refresh();
+        } catch (err) {
+            setError(
+                err instanceof ApiError ? err.message : "Failed to save template"
+            );
+        } finally {
+            setSaving(false);
+        }
+    }
+
+    async function remove(t: TemplateRow) {
+        await api.deleteTemplate(tenantId, t.id);
+        refresh();
+    }
+
+    return (
+        <section>
+            <p className="label mb-1">templates</p>
+            <h2 className="mb-4 text-lg font-semibold text-ink">
+                Canned messages &amp; quick replies
+            </h2>
+
+            {templates !== null && templates.length > 0 && (
+                <div className="card mb-4 divide-y divide-line">
+                    {templates.map((t) => (
+                        <div key={t.id} className="px-5 py-3">
+                            <div className="flex items-center justify-between">
+                                <p className="text-sm font-medium text-ink">
+                                    {t.name}
+                                </p>
+                                <button
+                                    onClick={() => remove(t)}
+                                    className="text-sm text-muted hover:text-warn"
+                                >
+                                    Remove
+                                </button>
+                            </div>
+                            <p className="mt-1 text-sm text-muted">{t.body}</p>
+                            {t.quickReplies.length > 0 && (
+                                <div className="mt-2 flex flex-wrap gap-1.5">
+                                    {t.quickReplies.map((qr) => (
+                                        <span
+                                            key={qr.id}
+                                            className="rounded-full bg-paper px-2.5 py-1 text-xs text-ink"
+                                        >
+                                            {qr.title}
+                                        </span>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    ))}
+                </div>
+            )}
+
+            <form onSubmit={save} className="card space-y-3 p-5">
+                <Field label="Name" value={name} onChange={setName} required />
+                <div>
+                    <label className="label mb-1 block">Body</label>
+                    <textarea
+                        value={body}
+                        onChange={(e) => setBody(e.target.value)}
+                        required
+                        rows={3}
+                        className="w-full rounded-md border border-line bg-paper px-3 py-2 text-sm text-ink outline-none focus:border-ink"
+                    />
+                </div>
+                <Field
+                    label="Quick replies (optional, up to 3, id:Title comma-separated)"
+                    value={quickRepliesInput}
+                    onChange={setQuickRepliesInput}
+                />
+                <div className="flex items-center gap-3 pt-1">
+                    <button
+                        type="submit"
+                        disabled={saving || !name.trim() || !body.trim()}
+                        className="rounded-md bg-ink px-4 py-2 text-sm font-medium text-paper transition hover:opacity-90 disabled:opacity-50"
+                    >
+                        {saving ? "Saving…" : "Save template"}
+                    </button>
+                    {error && <span className="text-sm text-warn">{error}</span>}
+                </div>
+            </form>
+        </section>
+    );
+}
+
+// --- Flows / rules builder ---------------------------------------------------
+
+const STEP_TYPES: FlowStep["type"][] = [
+    "send_text",
+    "send_template",
+    "ask",
+    "handoff"
+];
+
+function describeStep(step: FlowStep): string {
+    switch (step.type) {
+        case "send_text":
+            return `Send: "${step.text}"`;
+        case "send_template":
+            return `Send template: ${step.template}`;
+        case "ask":
+            return `Ask: "${step.text}" → save as {{${step.saveAs}}}`;
+        case "handoff":
+            return `Hand off to human${step.reason ? ` (${step.reason})` : ""}`;
+    }
+}
+
+function FlowsSection({ tenantId }: { tenantId: string }) {
+    const [flows, setFlows] = useState<FlowRow[] | null>(null);
+    const [error, setError] = useState("");
+
+    const [name, setName] = useState("");
+    const [triggerType, setTriggerType] = useState<"keyword" | "default">(
+        "keyword"
+    );
+    const [keywordsInput, setKeywordsInput] = useState("");
+    const [steps, setSteps] = useState<FlowStep[]>([]);
+    const [saving, setSaving] = useState(false);
+
+    // Add-step sub-form.
+    const [stepType, setStepType] = useState<FlowStep["type"]>("send_text");
+    const [stepText, setStepText] = useState("");
+    const [stepTemplate, setStepTemplate] = useState("");
+    const [stepSaveAs, setStepSaveAs] = useState("");
+    const [stepReason, setStepReason] = useState("");
+
+    function refresh() {
+        api.listFlows(tenantId)
+            .then(setFlows)
+            .catch((err: unknown) =>
+                setError(
+                    err instanceof ApiError ? err.message : "Failed to load flows"
+                )
+            );
+    }
+
+    useEffect(refresh, [tenantId]);
+
+    function addStep() {
+        if (stepType === "send_text" && stepText.trim()) {
+            setSteps((prev) => [...prev, { type: "send_text", text: stepText.trim() }]);
+        } else if (stepType === "send_template" && stepTemplate.trim()) {
+            setSteps((prev) => [
+                ...prev,
+                { type: "send_template", template: stepTemplate.trim() }
+            ]);
+        } else if (stepType === "ask" && stepText.trim() && stepSaveAs.trim()) {
+            setSteps((prev) => [
+                ...prev,
+                { type: "ask", text: stepText.trim(), saveAs: stepSaveAs.trim() }
+            ]);
+        } else if (stepType === "handoff") {
+            setSteps((prev) => [
+                ...prev,
+                { type: "handoff", reason: stepReason.trim() || undefined }
+            ]);
+        } else {
+            return;
+        }
+        setStepText("");
+        setStepTemplate("");
+        setStepSaveAs("");
+        setStepReason("");
+    }
+
+    function removeStep(index: number) {
+        setSteps((prev) => prev.filter((_, i) => i !== index));
+    }
+
+    async function save(e: React.FormEvent) {
+        e.preventDefault();
+        if (!name.trim() || steps.length === 0) return;
+        setSaving(true);
+        setError("");
+        try {
+            await api.upsertFlow(tenantId, {
+                name: name.trim(),
+                triggerType,
+                triggerKeywords:
+                    triggerType === "keyword"
+                        ? keywordsInput
+                              .split(",")
+                              .map((k) => k.trim())
+                              .filter(Boolean)
+                        : null,
+                steps
+            });
+            setName("");
+            setKeywordsInput("");
+            setSteps([]);
+            refresh();
+        } catch (err) {
+            setError(
+                err instanceof ApiError ? err.message : "Failed to save flow"
+            );
+        } finally {
+            setSaving(false);
+        }
+    }
+
+    async function toggleEnabled(flow: FlowRow) {
+        await api.upsertFlow(tenantId, { ...flow, enabled: !flow.enabled });
+        refresh();
+    }
+
+    async function remove(flow: FlowRow) {
+        await api.deleteFlow(tenantId, flow.id);
+        refresh();
+    }
+
+    return (
+        <section>
+            <p className="label mb-1">flows</p>
+            <h2 className="mb-4 text-lg font-semibold text-ink">
+                Rules builder
+            </h2>
+
+            {flows !== null && flows.length > 0 && (
+                <div className="card mb-4 divide-y divide-line">
+                    {flows.map((flow) => (
+                        <div key={flow.id} className="px-5 py-3">
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <p className="text-sm font-medium text-ink">
+                                        {flow.name}
+                                    </p>
+                                    <p className="label mt-0.5">
+                                        {flow.triggerType === "default"
+                                            ? "default fallback"
+                                            : `on: ${(flow.triggerKeywords ?? []).join(", ")}`}
+                                    </p>
+                                </div>
+                                <div className="flex items-center gap-4">
+                                    <button
+                                        onClick={() => toggleEnabled(flow)}
+                                        className={`rounded-full px-2.5 py-1 text-xs font-medium ${
+                                            flow.enabled
+                                                ? "bg-ok-soft text-ok"
+                                                : "bg-paper text-muted"
+                                        }`}
+                                    >
+                                        {flow.enabled ? "enabled" : "disabled"}
+                                    </button>
+                                    <button
+                                        onClick={() => remove(flow)}
+                                        className="text-sm text-muted hover:text-warn"
+                                    >
+                                        Remove
+                                    </button>
+                                </div>
+                            </div>
+                            <ol className="mt-2 space-y-0.5">
+                                {flow.steps.map((step, i) => (
+                                    <li
+                                        key={i}
+                                        className="font-mono text-xs text-muted"
+                                    >
+                                        {i + 1}. {describeStep(step)}
+                                    </li>
+                                ))}
+                            </ol>
+                        </div>
+                    ))}
+                </div>
+            )}
+
+            <form onSubmit={save} className="card space-y-4 p-5">
+                <div className="flex flex-wrap gap-3">
+                    <div className="flex-1">
+                        <Field label="Name" value={name} onChange={setName} required />
+                    </div>
+                    <div>
+                        <label className="label mb-1 block">Trigger</label>
+                        <select
+                            value={triggerType}
+                            onChange={(e) =>
+                                setTriggerType(
+                                    e.target.value as "keyword" | "default"
+                                )
+                            }
+                            className="rounded-md border border-line bg-paper px-3 py-2 text-sm text-ink outline-none focus:border-ink"
+                        >
+                            <option value="keyword">Keyword match</option>
+                            <option value="default">Default fallback</option>
+                        </select>
+                    </div>
+                </div>
+
+                {triggerType === "keyword" && (
+                    <Field
+                        label="Keywords (comma-separated, matched anywhere in the message)"
+                        value={keywordsInput}
+                        onChange={setKeywordsInput}
+                    />
+                )}
+
+                <div>
+                    <label className="label mb-2 block">Steps</label>
+                    {steps.length > 0 && (
+                        <ol className="mb-3 space-y-1">
+                            {steps.map((step, i) => (
+                                <li
+                                    key={i}
+                                    className="flex items-center justify-between rounded-md bg-paper px-3 py-2 text-sm text-ink"
+                                >
+                                    <span className="font-mono text-xs">
+                                        {i + 1}. {describeStep(step)}
+                                    </span>
+                                    <button
+                                        type="button"
+                                        onClick={() => removeStep(i)}
+                                        className="text-xs text-muted hover:text-warn"
+                                    >
+                                        Remove
+                                    </button>
+                                </li>
+                            ))}
+                        </ol>
+                    )}
+
+                    <div className="flex flex-wrap items-end gap-2 rounded-md border border-dashed border-line p-3">
+                        <div>
+                            <label className="label mb-1 block">Step type</label>
+                            <select
+                                value={stepType}
+                                onChange={(e) =>
+                                    setStepType(e.target.value as FlowStep["type"])
+                                }
+                                className="rounded-md border border-line bg-paper px-3 py-2 text-sm text-ink outline-none focus:border-ink"
+                            >
+                                {STEP_TYPES.map((t) => (
+                                    <option key={t} value={t}>
+                                        {t}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+
+                        {(stepType === "send_text" || stepType === "ask") && (
+                            <div className="flex-1">
+                                <label className="label mb-1 block">Text</label>
+                                <input
+                                    value={stepText}
+                                    onChange={(e) => setStepText(e.target.value)}
+                                    placeholder="Use {{var}} to insert an earlier answer"
+                                    className="w-full rounded-md border border-line bg-paper px-3 py-2 text-sm text-ink outline-none focus:border-ink"
+                                />
+                            </div>
+                        )}
+
+                        {stepType === "send_template" && (
+                            <div className="flex-1">
+                                <label className="label mb-1 block">
+                                    Template name
+                                </label>
+                                <input
+                                    value={stepTemplate}
+                                    onChange={(e) => setStepTemplate(e.target.value)}
+                                    className="w-full rounded-md border border-line bg-paper px-3 py-2 text-sm text-ink outline-none focus:border-ink"
+                                />
+                            </div>
+                        )}
+
+                        {stepType === "ask" && (
+                            <div>
+                                <label className="label mb-1 block">Save as</label>
+                                <input
+                                    value={stepSaveAs}
+                                    onChange={(e) => setStepSaveAs(e.target.value)}
+                                    placeholder="name"
+                                    className="w-32 rounded-md border border-line bg-paper px-3 py-2 text-sm text-ink outline-none focus:border-ink"
+                                />
+                            </div>
+                        )}
+
+                        {stepType === "handoff" && (
+                            <div className="flex-1">
+                                <label className="label mb-1 block">
+                                    Reason (optional)
+                                </label>
+                                <input
+                                    value={stepReason}
+                                    onChange={(e) => setStepReason(e.target.value)}
+                                    className="w-full rounded-md border border-line bg-paper px-3 py-2 text-sm text-ink outline-none focus:border-ink"
+                                />
+                            </div>
+                        )}
+
+                        <button
+                            type="button"
+                            onClick={addStep}
+                            className="rounded-md border border-line px-3 py-2 text-sm font-medium text-ink transition hover:bg-paper"
+                        >
+                            Add step
+                        </button>
+                    </div>
+                </div>
+
+                <div className="flex items-center gap-3 pt-1">
+                    <button
+                        type="submit"
+                        disabled={saving || !name.trim() || steps.length === 0}
+                        className="rounded-md bg-ink px-4 py-2 text-sm font-medium text-paper transition hover:opacity-90 disabled:opacity-50"
+                    >
+                        {saving ? "Saving…" : "Save flow"}
+                    </button>
+                    {error && <span className="text-sm text-warn">{error}</span>}
+                </div>
+            </form>
         </section>
     );
 }
