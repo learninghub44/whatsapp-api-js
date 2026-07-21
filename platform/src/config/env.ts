@@ -1,3 +1,9 @@
+// On Cloudflare Workers (this platform's runtime — see wrangler.toml),
+// `process.env` is populated from the Worker's vars/secrets at request time
+// by the `nodejs_compat` compatibility flag; there is no dotenv/.env file to
+// load there. Locally (pnpm --filter whatsapp-platform dev, wrangler dev),
+// `dotenv` still loads `platform/.env` for convenience — importing it is a
+// no-op in the Workers runtime itself.
 import "dotenv/config";
 
 function required(name: string): string {
@@ -14,6 +20,8 @@ export const env = {
     // Service role key: this backend is the only thing talking to these
     // tables in Phase 1 (see schema.sql RLS notes), never expose it client-side.
     supabaseServiceRoleKey: required("SUPABASE_SERVICE_ROLE_KEY"),
+    // Meta webhook verification handshake token (see webhook.ts GET /webhook).
+    webhookVerifyToken: required("WEBHOOK_VERIFY_TOKEN"),
     // How many consecutive failures before a tenant's provider is tripped
     // into the circuit-broken "down" state.
     circuitBreakerThreshold: Number(

@@ -132,3 +132,8 @@ lib/
 
 # JetBrains IDEs
 .idea
+
+# Cloudflare Workers (wrangler dev cache, local-only secrets)
+.wrangler/
+.dev.vars
+.dev.vars.*

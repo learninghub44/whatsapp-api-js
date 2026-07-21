@@ -1,0 +1,26 @@
+name = "whatsapp-platform"
+main = "src/index.ts"
+compatibility_date = "2024-11-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Free-tier-friendly default; bump if the tenant/provider fan-out needs it.
+# usage_model = "bundled"
+
+[observability]
+enabled = true
+
+# --- Environment variables --------------------------------------------------
+# Non-secret vars can live here (or in a per-env [env.production.vars] block).
+# Secrets (SUPABASE_SERVICE_ROLE_KEY, WEBHOOK_VERIFY_TOKEN) must NOT be
+# committed — set them with:
+#   wrangler secret put SUPABASE_SERVICE_ROLE_KEY
+#   wrangler secret put WEBHOOK_VERIFY_TOKEN
+#
+# [vars]
+# SUPABASE_URL = "https://your-project.supabase.co"
+# DASHBOARD_ORIGINS = "https://your-dashboard.pages.dev"
+# CIRCUIT_BREAKER_THRESHOLD = "3"
+# CIRCUIT_BREAKER_COOLDOWN_MS = "60000"
+# AI_REQUEST_TIMEOUT_MS = "15000"
+# CONVERSATION_HISTORY_TURNS = "8"
+# TENANT_CACHE_TTL_MS = "30000"

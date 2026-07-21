@@ -90,6 +90,23 @@ provider chains. No dashboard/UI yet.
 - [x] Templates and quick replies per tenant.
 - [x] Dashboard screens for flows/templates/escalated conversations.
 
+## Phase 4 — Cloudflare Workers hosting (in progress)
+- [x] `platform/` backend migrated off Express to Hono (Express/Node's `http`
+  module don't run on Workers).
+- [x] `platform/src/index.ts` replaces `server.ts` as the Worker's `fetch`
+  entry point (`export default app` from Hono).
+- [x] Tenant `WhatsAppAPI` instances now built from
+  `whatsapp-api-js/middleware/cloudflare` instead of `/middleware/express`
+  (this repo's SDK already ships that adapter — no library changes needed).
+- [x] `platform/wrangler.toml` added (`nodejs_compat` flag so
+  `process.env` still works for `config/env.ts` / Supabase secrets).
+- [ ] Not yet done: actually running `wrangler secret put ...` and
+  `wrangler deploy` against a real Cloudflare account (needs the account's
+  credentials — out of scope for what an agent can do unattended).
+- [ ] Not yet done: point `dashboard/`'s API base URL at the deployed
+  Worker's URL (currently assumes `platform` running locally / on Railway
+  per earlier phases).
+
 ## Notes for agents picking this up
 - Keep the AI provider abstraction and the WhatsApp layer fully
   decoupled — the automation engine should never import a specific

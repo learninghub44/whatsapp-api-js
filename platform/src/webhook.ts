@@ -1,4 +1,4 @@
-import { Router, type Request, type Response } from "express";
+import { Hono } from "hono";
 import { Text, Interactive, ActionButtons, Button, Body } from "whatsapp-api-js/messages";
 import type { OnMessageArgs } from "whatsapp-api-js/emitters";
 import type { PostData } from "whatsapp-api-js/types";
@@ -8,8 +8,9 @@ import { getRecentHistory, appendMessage } from "./conversation/history.js";
 import { logUsageEvent } from "./usage/log.js";
 import type { AIProviderRouter } from "./ai/router.js";
 import { handleIncomingMessageForFlows, type QuickReply } from "./flows/engine.js";
+import { env } from "./config/env.js";
 
-export const webhookRouter = Router();
+export const webhookRouter = new Hono();
 
 /** Pulls phone_number_id out of Meta's payload without fully parsing it. */
 function peekPhoneNumberId(raw: string): string | null {
@@ -102,42 +103,39 @@ async function handleIncomingMessage(
 // WEBHOOK_VERIFY_TOKEN rather than a per-tenant one — fine for the common
 // setup of one Meta app managing multiple phone numbers/tenants. Revisit if
 // a tenant ever needs their own Meta app.
-webhookRouter.get("/webhook", async (req: Request, res: Response) => {
-    const mode = req.query["hub.mode"];
-    const token = req.query["hub.verify_token"];
-    const challenge = req.query["hub.challenge"];
+webhookRouter.get("/webhook", async (c) => {
+    const mode = c.req.query("hub.mode");
+    const token = c.req.query("hub.verify_token");
+    const challenge = c.req.query("hub.challenge");
 
-    if (mode === "subscribe" && token && token === process.env.WEBHOOK_VERIFY_TOKEN) {
-        res.status(200).send(challenge);
-        return;
+    if (mode === "subscribe" && token && token === env.webhookVerifyToken) {
+        return c.text(challenge ?? "", 200);
     }
 
-    res.sendStatus(403);
+    return c.body(null, 403);
 });
 
-webhookRouter.post(
-    "/webhook",
-    async (req: Request, res: Response) => {
-        const raw = typeof req.body === "string" ? req.body : "";
-        const phoneNumberId = peekPhoneNumberId(raw);
+webhookRouter.post("/webhook", async (c) => {
+    // The SDK's handle_post expects a standard Fetch Request (Workers-native),
+    // but we still need to peek the raw body first to resolve the tenant —
+    // clone so the SDK can read the body itself afterwards.
+    const raw = await c.req.raw.clone().text();
+    const phoneNumberId = peekPhoneNumberId(raw);
 
-        if (!phoneNumberId) {
-            res.sendStatus(400);
-            return;
-        }
-
-        const runtime = await getTenantRuntime(
-            phoneNumberId,
-            handleIncomingMessage
-        );
-
-        if (!runtime) {
-            // Unknown phone_number_id — not one of our tenants.
-            res.sendStatus(404);
-            return;
-        }
-
-        const status = await runtime.api.handle_post(req);
-        res.sendStatus(status);
+    if (!phoneNumberId) {
+        return c.body(null, 400);
     }
-);
+
+    const runtime = await getTenantRuntime(
+        phoneNumberId,
+        handleIncomingMessage
+    );
+
+    if (!runtime) {
+        // Unknown phone_number_id — not one of our tenants.
+        return c.body(null, 404);
+    }
+
+    const status = await runtime.api.handle_post(c.req.raw);
+    return new Response(null, { status });
+});

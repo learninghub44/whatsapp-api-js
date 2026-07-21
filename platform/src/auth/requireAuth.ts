@@ -1,8 +1,8 @@
-import type { NextFunction, Request, Response } from "express";
+import type { Context, Next } from "hono";
 import { supabase } from "../db/client.js";
 
-export type AuthedRequest = Request & {
-    userId?: string;
+export type AuthedVars = {
+    userId: string;
 };
 
 /**
@@ -12,25 +12,22 @@ export type AuthedRequest = Request & {
  * as issued by the dashboard's Supabase Auth client-side session.
  */
 export async function requireAuth(
-    req: AuthedRequest,
-    res: Response,
-    next: NextFunction
-): Promise<void> {
-    const header = req.header("authorization") ?? "";
+    c: Context<{ Variables: AuthedVars }>,
+    next: Next
+): Promise<Response | void> {
+    const header = c.req.header("authorization") ?? "";
     const token = header.startsWith("Bearer ") ? header.slice(7) : null;
 
     if (!token) {
-        res.status(401).json({ error: "Missing bearer token" });
-        return;
+        return c.json({ error: "Missing bearer token" }, 401);
     }
 
     const { data, error } = await supabase.auth.getUser(token);
 
     if (error || !data.user) {
-        res.status(401).json({ error: "Invalid or expired session" });
-        return;
+        return c.json({ error: "Invalid or expired session" }, 401);
     }
 
-    req.userId = data.user.id;
-    next();
+    c.set("userId", data.user.id);
+    await next();
 }

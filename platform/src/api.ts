@@ -1,5 +1,5 @@
-import { Router, type NextFunction, type Response } from "express";
-import { requireAuth, type AuthedRequest } from "./auth/requireAuth.js";
+import { Hono } from "hono";
+import { requireAuth, type AuthedVars } from "./auth/requireAuth.js";
 import { getTenantRole } from "./auth/tenantAccess.js";
 import {
     addAIProvider,
@@ -24,103 +24,67 @@ import {
     listEscalatedConversations,
     resumeBotForConversation
 } from "./handoff/service.js";
+import type { Context } from "hono";
 
-export const apiRouter = Router();
-apiRouter.use((req, res, next) => {
-    requireAuth(req, res, next).catch(next);
-});
+type Env = { Variables: AuthedVars };
 
-/**
- * Express 4 doesn't forward async handler rejections to error middleware
- * on its own — wrap every route so a thrown/rejected error becomes a 500
- * via next(err) instead of hanging the request.
- */
-function ah(handler: (req: AuthedRequest, res: Response) => Promise<void>) {
-    return (req: AuthedRequest, res: Response, next: NextFunction) => {
-        handler(req, res).catch(next);
-    };
-}
+export const apiRouter = new Hono<Env>();
+apiRouter.use("*", requireAuth);
 
-/** Extracts a required string route param, 400ing if it's missing/malformed. */
-function requireParam(
-    req: AuthedRequest,
-    res: Response,
-    name: string
-): string | null {
-    const value = req.params[name];
-    if (typeof value !== "string") {
-        res.status(400).json({ error: `Missing route param: ${name}` });
-        return null;
-    }
-    return value;
-}
+/** True if the caller is a member of the tenant; caller sends 403 itself if not. */
 async function requireTenantMember(
-    req: AuthedRequest,
-    res: Response,
+    c: Context<Env>,
     tenantId: string
 ): Promise<boolean> {
-    const role = await getTenantRole(req.userId!, tenantId);
-    if (!role) {
-        res.status(403).json({ error: "Not a member of this tenant" });
-        return false;
-    }
-    return true;
+    const role = await getTenantRole(c.get("userId"), tenantId);
+    return role !== null;
 }
 
 // --- Tenants ---------------------------------------------------------------
 
-apiRouter.get(
-    "/api/tenants",
-    ah(async (req, res) => {
-        const tenants = await listTenantsForUser(req.userId!);
-        res.json({ tenants });
-    })
-);
+apiRouter.get("/api/tenants", async (c) => {
+    const tenants = await listTenantsForUser(c.get("userId"));
+    return c.json({ tenants });
+});
 
-apiRouter.post(
-    "/api/tenants",
-    ah(async (req, res) => {
-        const name =
-            typeof req.body?.name === "string" ? req.body.name.trim() : "";
-        if (!name) {
-            res.status(400).json({ error: "name is required" });
-            return;
-        }
+apiRouter.post("/api/tenants", async (c) => {
+    const body = await c.req.json().catch(() => ({}));
+    const name = typeof body?.name === "string" ? body.name.trim() : "";
+    if (!name) {
+        return c.json({ error: "name is required" }, 400);
+    }
 
-        const tenant = await createTenantForUser(req.userId!, name);
-        res.status(201).json({ tenant });
-    })
-);
+    const tenant = await createTenantForUser(c.get("userId"), name);
+    return c.json({ tenant }, 201);
+});
 
 // --- WhatsApp credentials ----------------------------------------------------
 
-apiRouter.put(
-    "/api/tenants/:tenantId/whatsapp",
-    ah(async (req, res) => {
-        const tenantId = requireParam(req, res, "tenantId");
-        if (!tenantId) return;
-        if (!(await requireTenantMember(req, res, tenantId))) return;
+apiRouter.put("/api/tenants/:tenantId/whatsapp", async (c) => {
+    const tenantId = c.req.param("tenantId");
+    if (!(await requireTenantMember(c, tenantId))) {
+        return c.json({ error: "Not a member of this tenant" }, 403);
+    }
 
-        const { phoneNumberId, token, appSecret, webhookVerifyToken } =
-            req.body ?? {};
+    const { phoneNumberId, token, appSecret, webhookVerifyToken } =
+        await c.req.json().catch(() => ({}));
 
-        if (!phoneNumberId || !token || !appSecret) {
-            res.status(400).json({
-                error: "phoneNumberId, token, and appSecret are required"
-            });
-            return;
-        }
+    if (!phoneNumberId || !token || !appSecret) {
+        return c.json(
+            { error: "phoneNumberId, token, and appSecret are required" },
+            400
+        );
+    }
 
-        await upsertWhatsAppCredentials(tenantId, {
-            phoneNumberId,
-            token,
-            appSecret,
-            webhookVerifyToken
-        });
+    await upsertWhatsAppCredentials(tenantId, {
+        phoneNumberId,
+        token,
+        appSecret,
+        webhookVerifyToken
+    });
 
-        res.status(204).send();
-    })
-);
+    return c.body(null, 204);
+});
 
 // --- AI providers --------------------------------------------------------
 
@@ -131,252 +95,233 @@ const VALID_PROVIDERS: AIProviderName[] = [
     "anthropic"
 ];
 
-apiRouter.get(
-    "/api/tenants/:tenantId/ai-providers",
-    ah(async (req, res) => {
-        const tenantId = requireParam(req, res, "tenantId");
-        if (!tenantId) return;
-        if (!(await requireTenantMember(req, res, tenantId))) return;
+apiRouter.get("/api/tenants/:tenantId/ai-providers", async (c) => {
+    const tenantId = c.req.param("tenantId");
+    if (!(await requireTenantMember(c, tenantId))) {
+        return c.json({ error: "Not a member of this tenant" }, 403);
+    }
 
-        const providers = await listAIProviders(tenantId);
-        res.json({ providers });
-    })
-);
+    const providers = await listAIProviders(tenantId);
+    return c.json({ providers });
+});
 
-apiRouter.post(
-    "/api/tenants/:tenantId/ai-providers",
-    ah(async (req, res) => {
-        const tenantId = requireParam(req, res, "tenantId");
-        if (!tenantId) return;
-        if (!(await requireTenantMember(req, res, tenantId))) return;
+apiRouter.post("/api/tenants/:tenantId/ai-providers", async (c) => {
+    const tenantId = c.req.param("tenantId");
+    if (!(await requireTenantMember(c, tenantId))) {
+        return c.json({ error: "Not a member of this tenant" }, 403);
+    }
 
-        const { provider, apiKey, model, priority } = req.body ?? {};
+    const { provider, apiKey, model, priority } = await c.req
+        .json()
+        .catch(() => ({}));
 
-        if (!VALID_PROVIDERS.includes(provider)) {
-            res.status(400).json({
-                error: `provider must be one of: ${VALID_PROVIDERS.join(", ")}`
-            });
-            return;
-        }
-        if (!apiKey) {
-            res.status(400).json({ error: "apiKey is required" });
-            return;
-        }
+    if (!VALID_PROVIDERS.includes(provider)) {
+        return c.json(
+            { error: `provider must be one of: ${VALID_PROVIDERS.join(", ")}` },
+            400
+        );
+    }
+    if (!apiKey) {
+        return c.json({ error: "apiKey is required" }, 400);
+    }
 
-        await addAIProvider(tenantId, {
-            provider,
-            apiKey,
-            model,
-            priority: typeof priority === "number" ? priority : 0
-        });
+    await addAIProvider(tenantId, {
+        provider,
+        apiKey,
+        model,
+        priority: typeof priority === "number" ? priority : 0
+    });
 
-        res.status(201).send();
-    })
-);
+    return c.body(null, 201);
+});
 
-apiRouter.put(
-    "/api/tenants/:tenantId/ai-providers/:providerId",
-    ah(async (req, res) => {
-        const tenantId = requireParam(req, res, "tenantId");
-        const providerId = requireParam(req, res, "providerId");
-        if (!tenantId || !providerId) return;
-        if (!(await requireTenantMember(req, res, tenantId))) return;
+apiRouter.put("/api/tenants/:tenantId/ai-providers/:providerId", async (c) => {
+    const tenantId = c.req.param("tenantId");
+    const providerId = c.req.param("providerId");
+    if (!(await requireTenantMember(c, tenantId))) {
+        return c.json({ error: "Not a member of this tenant" }, 403);
+    }
 
-        const { apiKey, model, priority, enabled } = req.body ?? {};
+    const { apiKey, model, priority, enabled } = await c.req
+        .json()
+        .catch(() => ({}));
 
-        await updateAIProvider(tenantId, providerId, {
-            apiKey,
-            model,
-            priority,
-            enabled
-        });
+    await updateAIProvider(tenantId, providerId, {
+        apiKey,
+        model,
+        priority,
+        enabled
+    });
 
-        res.status(204).send();
-    })
-);
+    return c.body(null, 204);
+});
 
 apiRouter.delete(
     "/api/tenants/:tenantId/ai-providers/:providerId",
-    ah(async (req, res) => {
-        const tenantId = requireParam(req, res, "tenantId");
-        const providerId = requireParam(req, res, "providerId");
-        if (!tenantId || !providerId) return;
-        if (!(await requireTenantMember(req, res, tenantId))) return;
+    async (c) => {
+        const tenantId = c.req.param("tenantId");
+        const providerId = c.req.param("providerId");
+        if (!(await requireTenantMember(c, tenantId))) {
+            return c.json({ error: "Not a member of this tenant" }, 403);
+        }
 
         await deleteAIProvider(tenantId, providerId);
-        res.status(204).send();
-    })
+        return c.body(null, 204);
+    }
 );
 
 // --- Usage / cost visibility ------------------------------------------------
 
-apiRouter.get(
-    "/api/tenants/:tenantId/usage",
-    ah(async (req, res) => {
-        const tenantId = requireParam(req, res, "tenantId");
-        if (!tenantId) return;
-        if (!(await requireTenantMember(req, res, tenantId))) return;
+apiRouter.get("/api/tenants/:tenantId/usage", async (c) => {
+    const tenantId = c.req.param("tenantId");
+    if (!(await requireTenantMember(c, tenantId))) {
+        return c.json({ error: "Not a member of this tenant" }, 403);
+    }
 
-        const days = Number(req.query.days ?? 30);
-        const summary = await getUsageSummary(tenantId, days);
-        res.json({ summary });
-    })
-);
+    const days = Number(c.req.query("days") ?? 30);
+    const summary = await getUsageSummary(tenantId, days);
+    return c.json({ summary });
+});
 
 // --- Flows / rules builder (PHASES.md #3) -----------------------------------
 
-apiRouter.get(
-    "/api/tenants/:tenantId/flows",
-    ah(async (req, res) => {
-        const tenantId = requireParam(req, res, "tenantId");
-        if (!tenantId) return;
-        if (!(await requireTenantMember(req, res, tenantId))) return;
+apiRouter.get("/api/tenants/:tenantId/flows", async (c) => {
+    const tenantId = c.req.param("tenantId");
+    if (!(await requireTenantMember(c, tenantId))) {
+        return c.json({ error: "Not a member of this tenant" }, 403);
+    }
 
-        const flows = await listFlows(tenantId);
-        res.json({ flows });
-    })
-);
+    const flows = await listFlows(tenantId);
+    return c.json({ flows });
+});
 
-apiRouter.post(
-    "/api/tenants/:tenantId/flows",
-    ah(async (req, res) => {
-        const tenantId = requireParam(req, res, "tenantId");
-        if (!tenantId) return;
-        if (!(await requireTenantMember(req, res, tenantId))) return;
+apiRouter.post("/api/tenants/:tenantId/flows", async (c) => {
+    const tenantId = c.req.param("tenantId");
+    if (!(await requireTenantMember(c, tenantId))) {
+        return c.json({ error: "Not a member of this tenant" }, 403);
+    }
 
-        const { id, name, triggerType, triggerKeywords, steps, priority, enabled } =
-            req.body ?? {};
+    const { id, name, triggerType, triggerKeywords, steps, priority, enabled } =
+        await c.req.json().catch(() => ({}));
 
-        if (typeof name !== "string" || !name.trim()) {
-            res.status(400).json({ error: "name is required" });
-            return;
-        }
-        if (triggerType !== "keyword" && triggerType !== "default") {
-            res.status(400).json({
-                error: "triggerType must be 'keyword' or 'default'"
-            });
-            return;
-        }
-        if (triggerType === "keyword" && !Array.isArray(triggerKeywords)) {
-            res.status(400).json({
-                error: "triggerKeywords is required for keyword-triggered flows"
-            });
-            return;
-        }
-        if (!Array.isArray(steps) || steps.length === 0) {
-            res.status(400).json({ error: "steps must be a non-empty array" });
-            return;
-        }
+    if (typeof name !== "string" || !name.trim()) {
+        return c.json({ error: "name is required" }, 400);
+    }
+    if (triggerType !== "keyword" && triggerType !== "default") {
+        return c.json(
+            { error: "triggerType must be 'keyword' or 'default'" },
+            400
+        );
+    }
+    if (triggerType === "keyword" && !Array.isArray(triggerKeywords)) {
+        return c.json(
+            { error: "triggerKeywords is required for keyword-triggered flows" },
+            400
+        );
+    }
+    if (!Array.isArray(steps) || steps.length === 0) {
+        return c.json({ error: "steps must be a non-empty array" }, 400);
+    }
 
-        const flow = await upsertFlow(tenantId, {
-            id,
-            name,
-            triggerType,
-            triggerKeywords: triggerType === "keyword" ? triggerKeywords : null,
-            steps,
-            priority,
-            enabled
-        });
+    const flow = await upsertFlow(tenantId, {
+        id,
+        name,
+        triggerType,
+        triggerKeywords: triggerType === "keyword" ? triggerKeywords : null,
+        steps,
+        priority,
+        enabled
+    });
 
-        res.status(201).json({ flow });
-    })
-);
+    return c.json({ flow }, 201);
+});
 
-apiRouter.delete(
-    "/api/tenants/:tenantId/flows/:flowId",
-    ah(async (req, res) => {
-        const tenantId = requireParam(req, res, "tenantId");
-        const flowId = requireParam(req, res, "flowId");
-        if (!tenantId || !flowId) return;
-        if (!(await requireTenantMember(req, res, tenantId))) return;
+apiRouter.delete("/api/tenants/:tenantId/flows/:flowId", async (c) => {
+    const tenantId = c.req.param("tenantId");
+    const flowId = c.req.param("flowId");
+    if (!(await requireTenantMember(c, tenantId))) {
+        return c.json({ error: "Not a member of this tenant" }, 403);
+    }
 
-        await deleteFlow(tenantId, flowId);
-        res.status(204).send();
-    })
-);
+    await deleteFlow(tenantId, flowId);
+    return c.body(null, 204);
+});
 
 // --- Templates / quick replies (PHASES.md #3) -------------------------------
 
-apiRouter.get(
-    "/api/tenants/:tenantId/templates",
-    ah(async (req, res) => {
-        const tenantId = requireParam(req, res, "tenantId");
-        if (!tenantId) return;
-        if (!(await requireTenantMember(req, res, tenantId))) return;
+apiRouter.get("/api/tenants/:tenantId/templates", async (c) => {
+    const tenantId = c.req.param("tenantId");
+    if (!(await requireTenantMember(c, tenantId))) {
+        return c.json({ error: "Not a member of this tenant" }, 403);
+    }
 
-        const templates = await listTemplates(tenantId);
-        res.json({ templates });
-    })
-);
+    const templates = await listTemplates(tenantId);
+    return c.json({ templates });
+});
 
-apiRouter.post(
-    "/api/tenants/:tenantId/templates",
-    ah(async (req, res) => {
-        const tenantId = requireParam(req, res, "tenantId");
-        if (!tenantId) return;
-        if (!(await requireTenantMember(req, res, tenantId))) return;
+apiRouter.post("/api/tenants/:tenantId/templates", async (c) => {
+    const tenantId = c.req.param("tenantId");
+    if (!(await requireTenantMember(c, tenantId))) {
+        return c.json({ error: "Not a member of this tenant" }, 403);
+    }
 
-        const { id, name, body, quickReplies } = req.body ?? {};
+    const { id, name, body, quickReplies } = await c.req
+        .json()
+        .catch(() => ({}));
 
-        if (typeof name !== "string" || !name.trim()) {
-            res.status(400).json({ error: "name is required" });
-            return;
-        }
-        if (typeof body !== "string" || !body.trim()) {
-            res.status(400).json({ error: "body is required" });
-            return;
-        }
+    if (typeof name !== "string" || !name.trim()) {
+        return c.json({ error: "name is required" }, 400);
+    }
+    if (typeof body !== "string" || !body.trim()) {
+        return c.json({ error: "body is required" }, 400);
+    }
 
-        try {
-            const template = await upsertTemplate(tenantId, {
-                id,
-                name,
-                body,
-                quickReplies: Array.isArray(quickReplies) ? quickReplies : []
-            });
-            res.status(201).json({ template });
-        } catch (err) {
-            res.status(400).json({ error: (err as Error).message });
-        }
-    })
-);
+    try {
+        const template = await upsertTemplate(tenantId, {
+            id,
+            name,
+            body,
+            quickReplies: Array.isArray(quickReplies) ? quickReplies : []
+        });
+        return c.json({ template }, 201);
+    } catch (err) {
+        return c.json({ error: (err as Error).message }, 400);
+    }
+});
 
-apiRouter.delete(
-    "/api/tenants/:tenantId/templates/:templateId",
-    ah(async (req, res) => {
-        const tenantId = requireParam(req, res, "tenantId");
-        const templateId = requireParam(req, res, "templateId");
-        if (!tenantId || !templateId) return;
-        if (!(await requireTenantMember(req, res, tenantId))) return;
+apiRouter.delete("/api/tenants/:tenantId/templates/:templateId", async (c) => {
+    const tenantId = c.req.param("tenantId");
+    const templateId = c.req.param("templateId");
+    if (!(await requireTenantMember(c, tenantId))) {
+        return c.json({ error: "Not a member of this tenant" }, 403);
+    }
 
-        await deleteTemplate(tenantId, templateId);
-        res.status(204).send();
-    })
-);
+    await deleteTemplate(tenantId, templateId);
+    return c.body(null, 204);
+});
 
 // --- Human handoff / escalation (PHASES.md #3) ------------------------------
 
-apiRouter.get(
-    "/api/tenants/:tenantId/conversations/escalated",
-    ah(async (req, res) => {
-        const tenantId = requireParam(req, res, "tenantId");
-        if (!tenantId) return;
-        if (!(await requireTenantMember(req, res, tenantId))) return;
+apiRouter.get("/api/tenants/:tenantId/conversations/escalated", async (c) => {
+    const tenantId = c.req.param("tenantId");
+    if (!(await requireTenantMember(c, tenantId))) {
+        return c.json({ error: "Not a member of this tenant" }, 403);
+    }
 
-        const conversations = await listEscalatedConversations(tenantId);
-        res.json({ conversations });
-    })
-);
+    const conversations = await listEscalatedConversations(tenantId);
+    return c.json({ conversations });
+});
 
 apiRouter.post(
     "/api/tenants/:tenantId/conversations/:waId/resume-bot",
-    ah(async (req, res) => {
-        const tenantId = requireParam(req, res, "tenantId");
-        const waId = requireParam(req, res, "waId");
-        if (!tenantId || !waId) return;
-        if (!(await requireTenantMember(req, res, tenantId))) return;
+    async (c) => {
+        const tenantId = c.req.param("tenantId");
+        const waId = c.req.param("waId");
+        if (!(await requireTenantMember(c, tenantId))) {
+            return c.json({ error: "Not a member of this tenant" }, 403);
+        }
 
         await resumeBotForConversation(tenantId, waId);
-        res.status(204).send();
-    })
+        return c.body(null, 204);
+    }
 );

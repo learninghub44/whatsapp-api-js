@@ -1,4 +1,4 @@
-import { WhatsAppAPI } from "whatsapp-api-js/middleware/express";
+import { WhatsAppAPI } from "whatsapp-api-js/middleware/cloudflare";
 import type { OnMessageArgs } from "whatsapp-api-js/emitters";
 
 import { getTenantByPhoneNumberId } from "./repository.js";
