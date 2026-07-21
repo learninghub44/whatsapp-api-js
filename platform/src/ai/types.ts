@@ -19,6 +19,11 @@ export type AIResponse = {
     /** Name of the provider that actually produced this response. */
     provider: string;
     model?: string;
+    /** Token counts, when the provider reports them — used for cost estimation. */
+    usage?: {
+        promptTokens?: number;
+        completionTokens?: number;
+    };
 };
 
 /**

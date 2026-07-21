@@ -30,5 +30,10 @@ export const env = {
         process.env.CONVERSATION_HISTORY_TURNS ?? 8
     ),
     // TTL (ms) for the in-memory tenant lookup cache before re-hitting Supabase.
-    tenantCacheTtlMs: Number(process.env.TENANT_CACHE_TTL_MS ?? 30_000)
+    tenantCacheTtlMs: Number(process.env.TENANT_CACHE_TTL_MS ?? 30_000),
+    // Origin(s) allowed to call /api/* (the dashboard). Comma-separated.
+    // Unset in development falls back to allowing any origin.
+    dashboardOrigins: process.env.DASHBOARD_ORIGINS
+        ? process.env.DASHBOARD_ORIGINS.split(",").map((s) => s.trim())
+        : null
 };

@@ -9,6 +9,7 @@ import {
 
 type OpenAICompatibleChatResponse = {
     choices?: { message?: { content?: string } }[];
+    usage?: { prompt_tokens?: number; completion_tokens?: number };
     error?: { message?: string };
 };
 
@@ -76,6 +77,14 @@ export abstract class OpenAICompatibleProvider implements AIProvider {
             throw new Error(`[${this.name}] empty response`);
         }
 
-        return { content, provider: this.name, model };
+        return {
+            content,
+            provider: this.name,
+            model,
+            usage: {
+                promptTokens: data.usage?.prompt_tokens,
+                completionTokens: data.usage?.completion_tokens
+            }
+        };
     }
 }

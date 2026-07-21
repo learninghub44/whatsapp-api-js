@@ -5,6 +5,7 @@ import type { PostData } from "whatsapp-api-js/types";
 
 import { getTenantRuntime } from "./tenants/registry.js";
 import { getRecentHistory, appendMessage } from "./conversation/history.js";
+import { logUsageEvent } from "./usage/log.js";
 import type { AIProviderRouter } from "./ai/router.js";
 
 export const webhookRouter = Router();
@@ -53,6 +54,7 @@ async function handleIncomingMessage(
             response.content,
             response.provider
         );
+        await logUsageEvent(runtime.tenantId, response);
     } catch (err) {
         // All providers failed/misconfigured for this tenant — never let
         // that throw uncaught into the webhook handler (PHASES.md #2).
@@ -68,11 +70,10 @@ async function handleIncomingMessage(
     }
 }
 
-// Meta's webhook verification handshake. Only meaningful once a tenant's
-// webhookVerifyToken is known, so this uses whichever tenant credentials
-// were configured for the app-level verify token, or the first active
-// tenant as a fallback in single-app setups. Phase 2 gives each tenant its
-// own verify endpoint via the dashboard; Phase 1 assumes one Meta app.
+// Meta's webhook verification handshake. This uses one process-wide
+// WEBHOOK_VERIFY_TOKEN rather than a per-tenant one — fine for the common
+// setup of one Meta app managing multiple phone numbers/tenants. Revisit if
+// a tenant ever needs their own Meta app.
 webhookRouter.get("/webhook", async (req: Request, res: Response) => {
     const mode = req.query["hub.mode"];
     const token = req.query["hub.verify_token"];

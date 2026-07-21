@@ -17,10 +17,12 @@
         "whatsapp-api-js": "workspace:*",
         "@supabase/supabase-js": "^2.45.4",
         "express": "^4.19.2",
+        "cors": "^2.8.5",
         "dotenv": "^16.4.5"
     },
     "devDependencies": {
         "@types/express": "^5.0.0",
+        "@types/cors": "^2.8.17",
         "@types/node": "^18.19.130",
         "typescript": "^5.9.3",
         "tsx": "^4.19.0"

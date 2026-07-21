@@ -1,6 +1,7 @@
 packages:
   - "."
   - "platform"
+  - "dashboard"
 
 allowBuilds:
   esbuild: true
