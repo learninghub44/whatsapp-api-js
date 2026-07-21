@@ -6,6 +6,13 @@
 A lightweight, dependency-less, efficient TS library for interacting
 with the official WhatsApp Cloud API.
 
+> **This fork also contains a multi-tenant WhatsApp automation platform**
+> built on top of this SDK — see [`platform/`](platform/README.md) (backend:
+> multi-tenant core loop, AI provider fallback, flows/rules builder, human
+> handoff, templates) and [`dashboard/`](dashboard/) (the tenant console).
+> Roadmap and phase status: [PHASES.md](PHASES.md). Repo orientation for AI
+> coding agents: [AGENTS.md](AGENTS.md).
+
 ## List of contents
 
 - [whatsapp-api-js v6](#whatsapp-api-js-v6)
