@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from "express";
-import { Text } from "whatsapp-api-js/messages";
+import { Text, Interactive, ActionButtons, Button, Body } from "whatsapp-api-js/messages";
 import type { OnMessageArgs } from "whatsapp-api-js/emitters";
 import type { PostData } from "whatsapp-api-js/types";
 
@@ -7,6 +7,7 @@ import { getTenantRuntime } from "./tenants/registry.js";
 import { getRecentHistory, appendMessage } from "./conversation/history.js";
 import { logUsageEvent } from "./usage/log.js";
 import type { AIProviderRouter } from "./ai/router.js";
+import { handleIncomingMessageForFlows, type QuickReply } from "./flows/engine.js";
 
 export const webhookRouter = Router();
 
@@ -36,9 +37,36 @@ async function handleIncomingMessage(
     }
 
     await args.received("text");
+    await appendMessage(runtime.tenantId, args.from, "user", userText);
+
+    // Reply helper the flow engine can call without knowing about
+    // whatsapp-api-js message classes — up to 3 quick-reply buttons per
+    // message, mirroring ActionButtons' limit (PHASES.md #3).
+    const send = async (body: string, quickReplies?: QuickReply[]) => {
+        let message: Text | Interactive;
+
+        const buttons = (quickReplies ?? [])
+            .slice(0, 3)
+            .map((qr) => new Button(qr.id, qr.title));
+        const [first, ...rest] = buttons;
+
+        message = first
+            ? new Interactive(new ActionButtons(first, ...rest), new Body(body))
+            : new Text(body);
+
+        await args.reply(message);
+        await appendMessage(runtime.tenantId, args.from, "assistant", body);
+    };
+
+    const handledByFlow = await handleIncomingMessageForFlows(
+        runtime.tenantId,
+        args.from,
+        userText,
+        send
+    );
+    if (handledByFlow) return;
 
     const history = await getRecentHistory(runtime.tenantId, args.from);
-    await appendMessage(runtime.tenantId, args.from, "user", userText);
 
     try {
         const response = await runtime.router.chat([

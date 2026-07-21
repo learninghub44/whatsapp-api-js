@@ -71,5 +71,28 @@ Point the tenant's Meta app webhook at `https://<your-host>/webhook`.
 - Webhook verification (`GET /webhook`) uses one process-wide
   `WEBHOOK_VERIFY_TOKEN`, not a per-tenant one — fine for a single Meta app
   managing multiple phone numbers, which is the common setup.
-- No dashboard, auth, or usage/cost visibility — that's Phase 2.
-- No intent routing, flow builder, or human handoff — that's Phase 3.
+
+## Phase 3 — flows, templates, human handoff
+
+- **`src/flows/`** — `types.ts` defines the step shapes (`send_text`,
+  `send_template`, `ask`, `handoff`); `matcher.ts` does keyword intent
+  matching against a tenant's enabled flows (first match by priority wins,
+  falls back to a `trigger_type: 'default'` flow if configured);
+  `engine.ts` runs/resumes a flow per `(tenant, wa_id)`, pausing on `ask`
+  steps and interpolating `{{var}}` placeholders from prior answers.
+- **`src/conversation/state.ts`** — `conversation_state` table: is this
+  chat currently `bot` or `human` mode, and if mid-flow, which step.
+- **`src/handoff/`** — list conversations currently escalated to a human,
+  and resume the bot for one (`POST /api/tenants/:id/conversations/:waId/resume-bot`).
+- **`src/webhook.ts`** — now checks the flow engine before the AI router:
+  human-mode conversations get no auto-reply; an active/matched flow runs
+  instead of AI; only if neither applies does it fall through to Phase 1/2's
+  AI provider chat.
+- Apply `platform/src/db/schema_phase3.sql` after `schema.sql` and
+  `schema_phase2.sql`.
+
+### Known Phase 3 gaps
+- Intent routing is keyword substring matching, not NLU/AI classification.
+- No dashboard screens yet for building flows/templates or viewing the
+  escalated-conversations inbox — only the `/api/tenants/:id/flows`,
+  `/templates`, and `/conversations/escalated` endpoints exist so far.

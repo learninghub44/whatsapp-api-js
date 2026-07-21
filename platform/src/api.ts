@@ -12,6 +12,18 @@ import {
 } from "./tenants/mutations.js";
 import { getUsageSummary } from "./usage/query.js";
 import type { AIProviderName } from "./types.js";
+import {
+    deleteFlow,
+    deleteTemplate,
+    listFlows,
+    listTemplates,
+    upsertFlow,
+    upsertTemplate
+} from "./flows/mutations.js";
+import {
+    listEscalatedConversations,
+    resumeBotForConversation
+} from "./handoff/service.js";
 
 export const apiRouter = Router();
 apiRouter.use((req, res, next) => {
@@ -208,5 +220,163 @@ apiRouter.get(
         const days = Number(req.query.days ?? 30);
         const summary = await getUsageSummary(tenantId, days);
         res.json({ summary });
+    })
+);
+
+// --- Flows / rules builder (PHASES.md #3) -----------------------------------
+
+apiRouter.get(
+    "/api/tenants/:tenantId/flows",
+    ah(async (req, res) => {
+        const tenantId = requireParam(req, res, "tenantId");
+        if (!tenantId) return;
+        if (!(await requireTenantMember(req, res, tenantId))) return;
+
+        const flows = await listFlows(tenantId);
+        res.json({ flows });
+    })
+);
+
+apiRouter.post(
+    "/api/tenants/:tenantId/flows",
+    ah(async (req, res) => {
+        const tenantId = requireParam(req, res, "tenantId");
+        if (!tenantId) return;
+        if (!(await requireTenantMember(req, res, tenantId))) return;
+
+        const { id, name, triggerType, triggerKeywords, steps, priority, enabled } =
+            req.body ?? {};
+
+        if (typeof name !== "string" || !name.trim()) {
+            res.status(400).json({ error: "name is required" });
+            return;
+        }
+        if (triggerType !== "keyword" && triggerType !== "default") {
+            res.status(400).json({
+                error: "triggerType must be 'keyword' or 'default'"
+            });
+            return;
+        }
+        if (triggerType === "keyword" && !Array.isArray(triggerKeywords)) {
+            res.status(400).json({
+                error: "triggerKeywords is required for keyword-triggered flows"
+            });
+            return;
+        }
+        if (!Array.isArray(steps) || steps.length === 0) {
+            res.status(400).json({ error: "steps must be a non-empty array" });
+            return;
+        }
+
+        const flow = await upsertFlow(tenantId, {
+            id,
+            name,
+            triggerType,
+            triggerKeywords: triggerType === "keyword" ? triggerKeywords : null,
+            steps,
+            priority,
+            enabled
+        });
+
+        res.status(201).json({ flow });
+    })
+);
+
+apiRouter.delete(
+    "/api/tenants/:tenantId/flows/:flowId",
+    ah(async (req, res) => {
+        const tenantId = requireParam(req, res, "tenantId");
+        const flowId = requireParam(req, res, "flowId");
+        if (!tenantId || !flowId) return;
+        if (!(await requireTenantMember(req, res, tenantId))) return;
+
+        await deleteFlow(tenantId, flowId);
+        res.status(204).send();
+    })
+);
+
+// --- Templates / quick replies (PHASES.md #3) -------------------------------
+
+apiRouter.get(
+    "/api/tenants/:tenantId/templates",
+    ah(async (req, res) => {
+        const tenantId = requireParam(req, res, "tenantId");
+        if (!tenantId) return;
+        if (!(await requireTenantMember(req, res, tenantId))) return;
+
+        const templates = await listTemplates(tenantId);
+        res.json({ templates });
+    })
+);
+
+apiRouter.post(
+    "/api/tenants/:tenantId/templates",
+    ah(async (req, res) => {
+        const tenantId = requireParam(req, res, "tenantId");
+        if (!tenantId) return;
+        if (!(await requireTenantMember(req, res, tenantId))) return;
+
+        const { id, name, body, quickReplies } = req.body ?? {};
+
+        if (typeof name !== "string" || !name.trim()) {
+            res.status(400).json({ error: "name is required" });
+            return;
+        }
+        if (typeof body !== "string" || !body.trim()) {
+            res.status(400).json({ error: "body is required" });
+            return;
+        }
+
+        try {
+            const template = await upsertTemplate(tenantId, {
+                id,
+                name,
+                body,
+                quickReplies: Array.isArray(quickReplies) ? quickReplies : []
+            });
+            res.status(201).json({ template });
+        } catch (err) {
+            res.status(400).json({ error: (err as Error).message });
+        }
+    })
+);
+
+apiRouter.delete(
+    "/api/tenants/:tenantId/templates/:templateId",
+    ah(async (req, res) => {
+        const tenantId = requireParam(req, res, "tenantId");
+        const templateId = requireParam(req, res, "templateId");
+        if (!tenantId || !templateId) return;
+        if (!(await requireTenantMember(req, res, tenantId))) return;
+
+        await deleteTemplate(tenantId, templateId);
+        res.status(204).send();
+    })
+);
+
+// --- Human handoff / escalation (PHASES.md #3) ------------------------------
+
+apiRouter.get(
+    "/api/tenants/:tenantId/conversations/escalated",
+    ah(async (req, res) => {
+        const tenantId = requireParam(req, res, "tenantId");
+        if (!tenantId) return;
+        if (!(await requireTenantMember(req, res, tenantId))) return;
+
+        const conversations = await listEscalatedConversations(tenantId);
+        res.json({ conversations });
+    })
+);
+
+apiRouter.post(
+    "/api/tenants/:tenantId/conversations/:waId/resume-bot",
+    ah(async (req, res) => {
+        const tenantId = requireParam(req, res, "tenantId");
+        const waId = requireParam(req, res, "waId");
+        if (!tenantId || !waId) return;
+        if (!(await requireTenantMember(req, res, tenantId))) return;
+
+        await resumeBotForConversation(tenantId, waId);
+        res.status(204).send();
     })
 );

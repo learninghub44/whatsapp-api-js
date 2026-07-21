@@ -84,10 +84,11 @@ provider chains. No dashboard/UI yet.
   WhatsApp end-users).
 - Usage/cost visibility per tenant per provider.
 
-## Phase 3 — Automation depth (not started)
-- Intent routing, simple flow/rules builder.
-- Human handoff / escalation.
-- Templates and quick replies per tenant.
+## Phase 3 — Automation depth (in progress)
+- [x] Intent routing (keyword-based) + simple flow/rules builder.
+- [x] Human handoff / escalation.
+- [x] Templates and quick replies per tenant.
+- [ ] Dashboard UI for building/editing flows (API exists; no screens yet).
 
 ## Notes for agents picking this up
 - Keep the AI provider abstraction and the WhatsApp layer fully
